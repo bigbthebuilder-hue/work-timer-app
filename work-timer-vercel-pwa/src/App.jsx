@@ -219,7 +219,7 @@ export default function App() {
 
   function saveEdit(data) {
     runProcess('update', () => {
-      const base = data.clockIn ? new Date(data.clockIn) : new Date();
+      const base = data.shiftDate ? new Date(data.shiftDate + 'T00:00:00') : (data.clockIn ? new Date(data.clockIn) : new Date());
       const clockIn = combineDateTime(base, data.clockInTime);
       const clockOut = data.clockOutTime ? combineDateTime(base, data.clockOutTime) : '';
       setShifts(prev => prev.map(s => s.id === data.id ? {
@@ -454,6 +454,7 @@ function Row({ label, value, cyan }) {
 }
 
 function EditModal({ shift, onCancel, onSave }) {
+  const [shiftDate, setShiftDate] = useState(dateKey(shift.clockIn || new Date()));
   const [clockInTime, setClockInTime] = useState(timeInputValue(shift.clockIn));
   const [clockOutTime, setClockOutTime] = useState(timeInputValue(shift.clockOut));
   const [lunch, setLunch] = useState(String(shift.lunchMinutes || 0));
@@ -464,6 +465,7 @@ function EditModal({ shift, onCancel, onSave }) {
       <div className="edit-box">
         <h3>Edit Shift</h3>
         <div className="edit-grid">
+          <label className="wide">Date<input type="date" value={shiftDate} onChange={e => setShiftDate(e.target.value)} /></label>
           <label>Clock In<input type="time" value={clockInTime} onChange={e => setClockInTime(e.target.value)} /></label>
           <label>Clock Out<input type="time" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} /></label>
           <label>Lunch<select value={lunch} onChange={e => setLunch(e.target.value)}><option value="0">No Lunch</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></label>
@@ -471,7 +473,7 @@ function EditModal({ shift, onCancel, onSave }) {
         </div>
         <div className="modal-actions">
           <button onClick={onCancel}>Cancel</button>
-          <button className="save" onClick={() => onSave({ ...shift, clockInTime, clockOutTime, lunchMinutes: lunch, notes })}>Save</button>
+          <button className="save" onClick={() => onSave({ ...shift, shiftDate, clockInTime, clockOutTime, lunchMinutes: lunch, notes })}>Save</button>
         </div>
       </div>
     </div>
