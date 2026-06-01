@@ -336,7 +336,7 @@ export default function App() {
       try {
         setSyncStatus(s => ({ ...s, state: 'syncing', message: `Syncing ${rows.length} record(s)...` }));
         for (const row of rows) {
-          const payload = encodeURIComponent(JSON.stringify(row));
+          const payload = JSON.stringify(row);
           await jsonp(syncUrl('upsert', { payload }));
           setSyncQueue(prev => prev.filter(id => id !== row.id));
         }
