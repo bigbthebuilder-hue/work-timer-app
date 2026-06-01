@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useState } from 'react';
 
 const STORAGE_KEY = 'work-timer-local-v1';
+const SYNC_SETTINGS_KEY = 'work-timer-sync-settings-v1';
 
 function uid() {
   return crypto?.randomUUID ? crypto.randomUUID() : `shift-${Date.now()}-${Math.random().toString(16).slice(2)}`;
@@ -108,6 +109,94 @@ function getRange(type, monthValue, yearValue) {
   return { start, end, label };
 }
 
+
+function loadJson(key, fallback) {
+  try {
+    const value = JSON.parse(localStorage.getItem(key) || 'null');
+    return value ?? fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+function jsonp(url, timeoutMs = 15000) {
+  return new Promise((resolve, reject) => {
+    const callbackName = `workTimerSync_${Date.now()}_${Math.random().toString(16).slice(2)}`;
+    const separator = url.includes('?') ? '&' : '?';
+    const script = document.createElement('script');
+    let done = false;
+
+    const cleanup = () => {
+      delete window[callbackName];
+      script.remove();
+    };
+
+    const timer = setTimeout(() => {
+      if (done) return;
+      done = true;
+      cleanup();
+      reject(new Error('Sync timed out.'));
+    }, timeoutMs);
+
+    window[callbackName] = data => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      cleanup();
+      if (data && data.ok === false) reject(new Error(data.error || 'Sync failed.'));
+      else resolve(data);
+    };
+
+    script.src = `${url}${separator}callback=${encodeURIComponent(callbackName)}&_=${Date.now()}`;
+    script.onerror = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      cleanup();
+      reject(new Error('Could not reach Google Sheets sync.'));
+    };
+
+    document.body.appendChild(script);
+  });
+}
+
+function shiftPayload(shift) {
+  const h = calcHours(shift);
+  return {
+    id: shift.id,
+    date: shift.date || dateKey(shift.clockIn),
+    clockIn: shift.clockIn || '',
+    clockOut: shift.clockOut || '',
+    lunchMinutes: Number(shift.lunchMinutes || 0),
+    grossHours: round2(h.gross),
+    netHours: round2(h.net),
+    notes: shift.notes || '',
+    deleted: !!shift.deleted,
+    createdAt: shift.createdAt || shift.updatedAt || new Date().toISOString(),
+    updatedAt: shift.updatedAt || new Date().toISOString()
+  };
+}
+
+function mergeShifts(localRows, cloudRows) {
+  const map = new Map();
+
+  [...cloudRows, ...localRows].forEach(row => {
+    if (!row || !row.id) return;
+    const existing = map.get(row.id);
+    if (!existing) {
+      map.set(row.id, row);
+      return;
+    }
+    const existingTime = new Date(existing.updatedAt || 0).getTime();
+    const rowTime = new Date(row.updatedAt || 0).getTime();
+    map.set(row.id, rowTime >= existingTime ? row : existing);
+  });
+
+  return Array.from(map.values())
+    .filter(row => !row.deleted)
+    .sort((a, b) => new Date(b.clockIn || b.updatedAt || 0) - new Date(a.clockIn || a.updatedAt || 0));
+}
+
 const idleLines = [
   'SYS// TIME CONSOLE READY',
   'WATCHING INPUT CHANNELS',
@@ -127,10 +216,16 @@ const processText = {
   update: ['LOADING SHIFT RECORD', 'VALIDATING TIME VALUES', 'RECALCULATING TOTALS', 'SAVING REVISION'],
   delete: ['TARGETING RECORD', 'REMOVING LOCAL ENTRY', 'REBUILDING INDEX', 'DELETE COMPLETE'],
   report: ['SCANNING LOCAL ARCHIVE', 'FILTERING DATE RANGE', 'COMPUTING TOTALS', 'RENDERING REPORT'],
+  sync: ['OPENING GOOGLE SHEETS LINK', 'WRITING BACKUP RECORDS', 'CONFIRMING CLOUD COPY', 'SYNC COMPLETE'],
+  pull: ['CONTACTING GOOGLE SHEETS', 'READING BACKUP RECORDS', 'MERGING LOCAL MEMORY', 'RESTORE COMPLETE'],
 };
 
 export default function App() {
   const [shifts, setShifts] = useState([]);
+  const [syncQueue, setSyncQueue] = useState([]);
+  const [syncSettings, setSyncSettings] = useState(() => loadJson(SYNC_SETTINGS_KEY, { scriptUrl: '', token: 'worktimer' }));
+  const [syncStatus, setSyncStatus] = useState({ state: 'idle', message: 'Local only', lastSync: '' });
+  const [showSyncSetup, setShowSyncSetup] = useState(false);
   const [now, setNow] = useState(new Date());
   const [tab, setTab] = useState('clock');
   const [lunchMinutes, setLunchMinutes] = useState(0);
@@ -142,17 +237,23 @@ export default function App() {
   const [process, setProcess] = useState(null);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]');
-      setShifts(Array.isArray(saved) ? saved : []);
-    } catch {
-      setShifts([]);
+    const saved = loadJson(STORAGE_KEY, []);
+    if (Array.isArray(saved)) {
+      setShifts(saved);
+    } else {
+      setShifts(Array.isArray(saved.shifts) ? saved.shifts : []);
+      setSyncQueue(Array.isArray(saved.syncQueue) ? saved.syncQueue : []);
+      if (saved.lastSync) setSyncStatus(s => ({ ...s, lastSync: saved.lastSync, message: 'Ready' }));
     }
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(shifts));
-  }, [shifts]);
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({ shifts, syncQueue, lastSync: syncStatus.lastSync || '' }));
+  }, [shifts, syncQueue, syncStatus.lastSync]);
+
+  useEffect(() => {
+    localStorage.setItem(SYNC_SETTINGS_KEY, JSON.stringify(syncSettings));
+  }, [syncSettings]);
 
   useEffect(() => {
     const t = setInterval(() => setNow(new Date()), 1000);
@@ -168,6 +269,13 @@ export default function App() {
     const t = setInterval(add, 1300);
     return () => clearInterval(t);
   }, []);
+
+
+  useEffect(() => {
+    if (!syncSettings.scriptUrl || !syncSettings.token || !syncQueue.length) return;
+    const t = setTimeout(() => syncPending(false), 1500);
+    return () => clearTimeout(t);
+  }, [syncQueue.length, syncSettings.scriptUrl, syncSettings.token]);
 
   const activeShift = shifts.find(s => !s.clockOut);
   const live = activeShift ? calcHours({ ...activeShift, clockOut: now.toISOString(), lunchMinutes }) : { net: 0 };
@@ -187,11 +295,110 @@ export default function App() {
     setTimeout(() => setProcess(null), lines.length * 260 + 950);
   }
 
+
+  function queueSync(id) {
+    setSyncQueue(prev => Array.from(new Set([...prev, id])));
+  }
+
+  function saveShift(nextShift) {
+    setShifts(prev => {
+      const exists = prev.some(s => s.id === nextShift.id);
+      return exists ? prev.map(s => s.id === nextShift.id ? nextShift : s) : [nextShift, ...prev];
+    });
+    queueSync(nextShift.id);
+  }
+
+  function syncUrl(action, extra = {}) {
+    const params = new URLSearchParams({
+      action,
+      token: syncSettings.token || '',
+      ...extra,
+    });
+    return `${String(syncSettings.scriptUrl || '').trim()}?${params.toString()}`;
+  }
+
+  async function syncPending(showProcess = true) {
+    if (!syncSettings.scriptUrl || !syncSettings.token) {
+      setShowSyncSetup(true);
+      setSyncStatus(s => ({ ...s, state: 'error', message: 'Sync not set up' }));
+      return;
+    }
+
+    const ids = syncQueue.length ? syncQueue : shifts.map(s => s.id);
+    const rows = shifts.filter(s => ids.includes(s.id)).map(shiftPayload);
+
+    if (!rows.length) {
+      setSyncStatus(s => ({ ...s, state: 'idle', message: 'Nothing to sync' }));
+      return;
+    }
+
+    const doSync = async () => {
+      try {
+        setSyncStatus(s => ({ ...s, state: 'syncing', message: `Syncing ${rows.length} record(s)...` }));
+        for (const row of rows) {
+          const payload = encodeURIComponent(JSON.stringify(row));
+          await jsonp(syncUrl('upsert', { payload }));
+          setSyncQueue(prev => prev.filter(id => id !== row.id));
+        }
+        setSyncStatus({ state: 'ok', message: 'Synced to Google Sheets', lastSync: new Date().toISOString() });
+      } catch (err) {
+        setSyncStatus(s => ({ ...s, state: 'error', message: err.message || 'Sync failed' }));
+      }
+    };
+
+    if (showProcess) runProcess('sync', doSync);
+    else doSync();
+  }
+
+  async function restoreFromSheets() {
+    if (!syncSettings.scriptUrl || !syncSettings.token) {
+      setShowSyncSetup(true);
+      setSyncStatus(s => ({ ...s, state: 'error', message: 'Sync not set up' }));
+      return;
+    }
+
+    runProcess('pull', async () => {
+      try {
+        setSyncStatus(s => ({ ...s, state: 'syncing', message: 'Restoring from Google Sheets...' }));
+        const result = await jsonp(syncUrl('list'));
+        const cloudRows = Array.isArray(result.rows) ? result.rows : [];
+        const merged = mergeShifts(shifts, cloudRows);
+        setShifts(merged);
+        setSyncQueue([]);
+        setSyncStatus({ state: 'ok', message: `Restored ${cloudRows.length} cloud record(s)`, lastSync: new Date().toISOString() });
+      } catch (err) {
+        setSyncStatus(s => ({ ...s, state: 'error', message: err.message || 'Restore failed' }));
+      }
+    });
+  }
+
+  function addManualShift() {
+    const start = new Date();
+    start.setHours(8, 0, 0, 0);
+    const end = new Date();
+    end.setHours(17, 0, 0, 0);
+
+    const shift = {
+      id: uid(),
+      date: dateKey(),
+      clockIn: start.toISOString(),
+      clockOut: end.toISOString(),
+      lunchMinutes: 0,
+      notes: 'Manual entry',
+      createdAt: new Date().toISOString(),
+      updatedAt: new Date().toISOString(),
+    };
+
+    saveShift(shift);
+    setEditing(shift);
+  }
+
+
   function clockIn() {
     if (activeShift) return;
     runProcess('clockIn', () => {
       setLunchMinutes(0);
-      setShifts(prev => [{
+      saveShift({
         id: uid(),
         date: dateKey(),
         clockIn: new Date().toISOString(),
@@ -200,19 +407,19 @@ export default function App() {
         notes: '',
         createdAt: new Date().toISOString(),
         updatedAt: new Date().toISOString(),
-      }, ...prev]);
+      });
     });
   }
 
   function clockOut() {
     if (!activeShift) return;
     runProcess('clockOut', () => {
-      setShifts(prev => prev.map(s => s.id === activeShift.id ? {
-        ...s,
+      saveShift({
+        ...activeShift,
         clockOut: new Date().toISOString(),
         lunchMinutes,
         updatedAt: new Date().toISOString(),
-      } : s));
+      });
       setLunchMinutes(0);
     });
   }
@@ -222,22 +429,26 @@ export default function App() {
       const base = data.shiftDate ? new Date(data.shiftDate + 'T00:00:00') : (data.clockIn ? new Date(data.clockIn) : new Date());
       const clockIn = combineDateTime(base, data.clockInTime);
       const clockOut = data.clockOutTime ? combineDateTime(base, data.clockOutTime) : '';
-      setShifts(prev => prev.map(s => s.id === data.id ? {
-        ...s,
+      saveShift({
+        ...data,
         date: dateKey(clockIn),
         clockIn,
         clockOut,
         lunchMinutes: Number(data.lunchMinutes || 0),
         notes: data.notes || '',
         updatedAt: new Date().toISOString(),
-      } : s));
+      });
       setEditing(null);
     });
   }
 
   function deleteShift(id) {
     if (!confirm('Delete this shift?')) return;
-    runProcess('delete', () => setShifts(prev => prev.filter(s => s.id !== id)));
+    runProcess('delete', () => {
+      const found = shifts.find(s => s.id === id);
+      if (found) saveShift({ ...found, deleted: true, updatedAt: new Date().toISOString() });
+      setShifts(prev => prev.filter(s => s.id !== id));
+    });
   }
 
   function selectReport(next) {
@@ -247,8 +458,9 @@ export default function App() {
     });
   }
 
-  const completed = shifts.filter(s => s.clockOut);
-  const recent = shifts.slice(0, 20);
+  const visibleShifts = shifts.filter(s => !s.deleted);
+  const completed = visibleShifts.filter(s => s.clockOut);
+  const recent = visibleShifts.slice(0, 20);
 
   const report = useMemo(() => {
     const r = getRange(rangeType, month, year);
@@ -312,6 +524,18 @@ export default function App() {
           <button className={`tab ${tab === 'reports' ? 'active' : ''}`} onClick={() => setTab('reports')}>Reports</button>
         </nav>
 
+
+        <SyncPanel
+          syncSettings={syncSettings}
+          setSyncSettings={setSyncSettings}
+          syncStatus={syncStatus}
+          pendingCount={syncQueue.length}
+          showSetup={showSyncSetup}
+          setShowSetup={setShowSyncSetup}
+          onSync={() => syncPending(true)}
+          onRestore={restoreFromSheets}
+        />
+
         {tab === 'clock' && (
           <>
             <Panel title="Main Control" lamp={activeShift}>
@@ -347,6 +571,7 @@ export default function App() {
             </Panel>
 
             <Panel title="Recent Shifts">
+              <button className="export-btn secondary" onClick={addManualShift}>Add Manual Shift</button>
               <RecordList rows={recent} onEdit={setEditing} onDelete={deleteShift} />
             </Panel>
           </>
@@ -407,6 +632,42 @@ function Panel({ title, children, lamp }) {
         <div className={`lamp ${lamp ? 'on' : ''}`} />
       </div>
       {children}
+    </section>
+  );
+}
+
+
+function SyncPanel({ syncSettings, setSyncSettings, syncStatus, pendingCount, showSetup, setShowSetup, onSync, onRestore }) {
+  return (
+    <section className="panel sync-panel">
+      <div className="panel-head">
+        <h2><span className="panel-marker" /> Sheet Sync</h2>
+        <div className={`lamp ${syncStatus.state === 'ok' ? 'on' : ''}`} />
+      </div>
+
+      <div className="sync-status">
+        <div>
+          <strong>{syncStatus.message || 'Local only'}</strong>
+          <small>{pendingCount} pending sync item(s){syncStatus.lastSync ? ` • last sync ${formatTime(syncStatus.lastSync)}` : ''}</small>
+        </div>
+        <button onClick={() => setShowSetup(!showSetup)}>{showSetup ? 'Hide' : 'Setup'}</button>
+      </div>
+
+      {showSetup && (
+        <div className="sync-setup">
+          <label>Apps Script Web App URL
+            <input value={syncSettings.scriptUrl} onChange={e => setSyncSettings(s => ({ ...s, scriptUrl: e.target.value }))} placeholder="https://script.google.com/macros/s/.../exec" />
+          </label>
+          <label>Sync Token
+            <input value={syncSettings.token} onChange={e => setSyncSettings(s => ({ ...s, token: e.target.value }))} />
+          </label>
+        </div>
+      )}
+
+      <div className="sync-actions">
+        <button onClick={onSync}>Sync Now</button>
+        <button onClick={onRestore}>Restore From Sheet</button>
+      </div>
     </section>
   );
 }

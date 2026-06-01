@@ -632,3 +632,73 @@ textarea {
     grid-template-columns: 1fr 1fr;
   }
 }
+
+
+/* Google Sheets sync controls */
+.sync-panel {
+  border-color: rgba(251, 191, 36, .28);
+}
+
+.sync-status {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+  border: 1px solid rgba(148,163,184,.20);
+  background: rgba(2,6,23,.65);
+  border-radius: 14px;
+  padding: 12px;
+}
+
+.sync-status strong {
+  display: block;
+  color: #fde68a;
+  font-size: 15px;
+  margin-bottom: 4px;
+}
+
+.sync-status small {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.sync-status button,
+.sync-actions button,
+.export-btn.secondary {
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: 11px;
+  border: 1px solid rgba(103,232,249,.48);
+  background: rgba(8,145,178,.22);
+  color: #cffafe;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.sync-setup {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.sync-actions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+
+.export-btn.secondary {
+  width: 100%;
+  margin-bottom: 10px;
+  border-color: rgba(251,191,36,.55);
+  background: rgba(120,53,15,.35);
+  color: #fde68a;
+}
+
+@media (max-width: 430px) {
+  .sync-actions {
+    grid-template-columns: 1fr;
+  }
+}
