@@ -73,21 +73,25 @@ function endOfDay(d) {
   return x;
 }
 
-function getRange(type, monthValue, yearValue) {
+function endOfWorkWeek(date) {
+  const start = startOfWeek(date);
+  return endOfDay(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 4));
+}
+
+function getRange(type, monthValue, yearValue, weekCount = 1) {
   const now = new Date();
   let start = new Date(now);
   let end = endOfDay(now);
   let label = 'Today';
 
-  if (type === 'week') {
-    start = startOfWeek(now);
-    end = endOfDay(new Date(start.getFullYear(), start.getMonth(), start.getDate() + 6));
-    label = 'This Week';
-  } else if (type === 'twoWeeks') {
-    start = new Date(now);
-    start.setDate(start.getDate() - 13);
+  if (type === 'weeks') {
+    const weeks = Math.max(1, Number(weekCount) || 1);
+    const currentWeekStart = startOfWeek(now);
+    start = new Date(currentWeekStart);
+    start.setDate(currentWeekStart.getDate() - ((weeks - 1) * 7));
     start.setHours(0, 0, 0, 0);
-    label = 'Last 2 Weeks';
+    end = endOfWorkWeek(now);
+    label = weeks === 1 ? 'This Work Week' : `Last ${weeks} Work Weeks`;
   } else if (type === 'mtd') {
     start = new Date(now.getFullYear(), now.getMonth(), 1);
     label = 'Month To Date';
@@ -108,7 +112,6 @@ function getRange(type, monthValue, yearValue) {
 
   return { start, end, label };
 }
-
 
 function loadJson(key, fallback) {
   try {
@@ -229,7 +232,8 @@ export default function App() {
   const [now, setNow] = useState(new Date());
   const [tab, setTab] = useState('clock');
   const [lunchMinutes, setLunchMinutes] = useState(0);
-  const [rangeType, setRangeType] = useState('week');
+  const [rangeType, setRangeType] = useState('weeks');
+  const [weekCount, setWeekCount] = useState('1');
   const [month, setMonth] = useState(dateKey().slice(0, 7));
   const [year, setYear] = useState(String(new Date().getFullYear()));
   const [editing, setEditing] = useState(null);
@@ -463,11 +467,13 @@ export default function App() {
   const recent = visibleShifts.slice(0, 20);
 
   const report = useMemo(() => {
-    const r = getRange(rangeType, month, year);
-    const rows = completed.filter(s => {
-      const d = new Date(s.clockIn);
-      return d >= r.start && d <= r.end;
-    });
+    const r = getRange(rangeType, month, year, weekCount);
+    const rows = completed
+      .filter(s => {
+        const d = new Date(s.clockIn);
+        return d >= r.start && d <= r.end;
+      })
+      .sort((a, b) => new Date(b.clockIn || 0) - new Date(a.clockIn || 0));
     let gross = 0, net = 0, lunch = 0;
     const days = new Set();
     rows.forEach(s => {
@@ -478,7 +484,7 @@ export default function App() {
       days.add(dateKey(s.clockIn));
     });
     return { ...r, rows, gross, net, lunch, days: days.size, avg: days.size ? net / days.size : 0 };
-  }, [completed, rangeType, month, year]);
+  }, [completed, rangeType, month, year, weekCount]);
 
   function exportCsv() {
     const header = 'Date,Clock In,Clock Out,Lunch Minutes,Gross Hours,Net Hours,Notes\n';
@@ -582,19 +588,29 @@ export default function App() {
             <Panel title="Report Selector">
               <div className="report-buttons">
                 {[
-                  ['week', 'This Week'],
-                  ['twoWeeks', '2 Weeks'],
+                  ['weeks', 'Choose Weeks'],
                   ['mtd', 'MTD'],
-                  ['month', 'Month'],
+                  ['month', 'Choose Month'],
                   ['ytd', 'YTD'],
-                  ['year', 'Year'],
+                  ['year', 'Choose Year'],
                 ].map(([key, label]) => (
                   <button key={key} className={`range-btn ${rangeType === key ? 'active' : ''}`} onClick={() => selectReport(key)}>{label}</button>
                 ))}
               </div>
               <div className="input-grid">
-                <label>Month<input type="month" value={month} onChange={e => setMonth(e.target.value)} /></label>
-                <label>Year<input type="number" value={year} onChange={e => setYear(e.target.value)} /></label>
+                <label>Number of Work Weeks
+                  <select value={weekCount} onChange={e => { setWeekCount(e.target.value); setRangeType('weeks'); }}>
+                    <option value="1">1 week: this Monday to Friday</option>
+                    <option value="2">2 consecutive work weeks</option>
+                    <option value="3">3 consecutive work weeks</option>
+                    <option value="4">4 consecutive work weeks</option>
+                    <option value="5">5 consecutive work weeks</option>
+                    <option value="6">6 consecutive work weeks</option>
+                    <option value="8">8 consecutive work weeks</option>
+                  </select>
+                </label>
+                <label>Choose Month<input type="month" value={month} onChange={e => { setMonth(e.target.value); setRangeType('month'); }} /></label>
+                <label>Choose Year<input type="number" value={year} onChange={e => { setYear(e.target.value); setRangeType('year'); }} /></label>
               </div>
             </Panel>
 
