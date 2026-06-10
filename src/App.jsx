@@ -469,10 +469,10 @@ export default function App() {
   const report = useMemo(() => {
     const r = getRange(rangeType, month, year, weekCount);
     const rows = completed
-      .filter(s => {
-        const d = new Date(s.clockIn);
-        return d >= r.start && d <= r.end;
-      })
+  .filter(s => {
+    const d = new Date(s.clockIn);
+    return d >= r.start && d <= r.end;
+  })
       .sort((a, b) => new Date(b.clockIn || 0) - new Date(a.clockIn || 0));
     let gross = 0, net = 0, lunch = 0;
     const days = new Set();
