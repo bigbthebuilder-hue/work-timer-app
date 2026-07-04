@@ -566,6 +566,17 @@ label {
   width: 100%;
   margin-top: 10px;
 }
+.report-actions {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.report-actions .export-btn {
+  margin-top: 0;
+}
+.print-report {
+  display: none;
+}
 
 .modal, .process {
   position: fixed;
@@ -1064,4 +1075,186 @@ textarea {
   .review-actions button {
     flex: 1 1 140px;
   }
+}
+
+@media (min-width: 560px) {
+  .report-actions {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@media print {
+  @page {
+    margin: 0.55in;
+  }
+  * {
+    box-shadow: none !important;
+    text-shadow: none !important;
+  }
+  html,
+  body,
+  #root,
+  .page {
+    width: auto;
+    min-height: 0;
+    margin: 0;
+    background: #fff !important;
+    color: #111827 !important;
+  }
+  .shell,
+  .modal,
+  .process {
+    display: none !important;
+  }
+  .print-report {
+    display: block;
+    background: #fff;
+    color: #111827;
+    font-family: Arial, Helvetica, sans-serif;
+    font-size: 10.5pt;
+    line-height: 1.35;
+  }
+  .print-header {
+    display: flex;
+    justify-content: space-between;
+    gap: 24px;
+    align-items: flex-start;
+    padding-bottom: 14px;
+    border-bottom: 2px solid #111827;
+    margin-bottom: 18px;
+  }
+  .print-header p {
+    margin: 0 0 4px;
+    color: #4b5563;
+    font-size: 10pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .08em;
+  }
+  .print-header h1 {
+    margin: 0;
+    color: #111827;
+    font-size: 24pt;
+    line-height: 1.05;
+  }
+  .print-header div:last-child {
+    text-align: right;
+  }
+  .print-header strong,
+  .print-header span {
+    display: block;
+  }
+  .print-header span {
+    margin-top: 4px;
+    color: #4b5563;
+  }
+  .print-section {
+    margin: 0 0 18px;
+  }
+  .print-avoid,
+  .print-summary-grid div,
+  .print-calc,
+  .print-review-list div {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-section h2 {
+    margin: 0 0 8px;
+    color: #111827;
+    font-size: 13pt;
+    border-bottom: 1px solid #d1d5db;
+    padding-bottom: 4px;
+  }
+  .print-summary-grid {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 8px;
+  }
+  .print-summary-grid div,
+  .print-calc,
+  .print-review-list div,
+  .print-clear,
+  .print-note {
+    border: 1px solid #d1d5db;
+    background: #fff;
+    padding: 8px;
+  }
+  .print-summary-grid span,
+  .print-calc span {
+    display: block;
+    color: #4b5563;
+    font-size: 8.5pt;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+  }
+  .print-summary-grid strong,
+  .print-calc strong {
+    display: block;
+    margin-top: 3px;
+    color: #111827;
+    font-size: 13pt;
+  }
+  .print-calc {
+    display: grid;
+    gap: 6px;
+  }
+  .print-calc div,
+  .print-review-list div {
+    display: grid;
+    grid-template-columns: 1.2fr 1fr auto;
+    gap: 10px;
+    align-items: baseline;
+  }
+  .print-calc div {
+    grid-template-columns: 1fr auto;
+  }
+  .print-note,
+  .print-clear {
+    margin: 8px 0 0;
+    color: #374151;
+  }
+  .print-review-list {
+    display: grid;
+    gap: 6px;
+  }
+  .print-review-list b {
+    color: #111827;
+    white-space: nowrap;
+  }
+  .print-table {
+    width: 100%;
+    border-collapse: collapse;
+    table-layout: fixed;
+    font-size: 9pt;
+  }
+  .print-table thead {
+    display: table-header-group;
+  }
+  .print-table tr {
+    break-inside: avoid;
+    page-break-inside: avoid;
+  }
+  .print-table th,
+  .print-table td {
+    border: 1px solid #d1d5db;
+    padding: 5px 6px;
+    text-align: left;
+    vertical-align: top;
+    overflow-wrap: anywhere;
+  }
+  .print-table th {
+    background: #f3f4f6;
+    color: #111827;
+    font-size: 8pt;
+    text-transform: uppercase;
+    letter-spacing: .03em;
+  }
+  .print-table th:nth-child(1) { width: 13%; }
+  .print-table th:nth-child(2) { width: 12%; }
+  .print-table th:nth-child(3),
+  .print-table th:nth-child(4) { width: 10%; }
+  .print-table th:nth-child(5),
+  .print-table th:nth-child(6),
+  .print-table th:nth-child(7) { width: 10%; }
 }

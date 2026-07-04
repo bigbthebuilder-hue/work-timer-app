@@ -94,6 +94,11 @@ function fmtHours(hours) {
   if (mins === 60) return `${whole + 1}h 00m`;
   return `${whole}h ${pad(mins)}m`;
 }
+function fmtSignedHours(hours) {
+  const value = Number(hours) || 0;
+  const sign = value > 0 ? '+' : value < 0 ? '-' : '';
+  return `${sign}${fmtHours(Math.abs(value))}`;
+}
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
 function positiveHours(value) { return Math.max(0, Number(value) || 0); }
 function bankedEarnedForRows(rows, defaultDailyHours) {
@@ -631,6 +636,7 @@ export default function App() {
     a.click();
     URL.revokeObjectURL(a.href);
   }
+  function printReport() { window.print(); }
 
   return <div className="page">
     {process && <Processing process={process} />}
@@ -656,11 +662,12 @@ export default function App() {
           {(rangeType === 'mtd' || rangeType === 'ytd') && <div className="report-picker-note">{rangeType === 'mtd' ? 'Month to date uses the first day of this month through today.' : 'Year to date uses January 1 through today, starting no earlier than your first saved record.'}</div>}
         </Panel>
         <Panel title="Banked Time Setup"><div className="settings-summary"><div><strong>{fmtHours(allTime.balance)}</strong><small>Current calculated banked balance</small></div><button onClick={() => setShowWorkSettings(!showWorkSettings)}>{showWorkSettings ? 'Hide Setup' : 'Edit Setup'}</button></div><BankedBreakdown allTime={allTime} openingBankedHours={workSettings.openingBankedHours} />{showWorkSettings && <div className="input-grid work-settings"><label>Standard Workday Hours<input type="number" min="1" max="24" step="0.25" value={workSettings.standardDailyHours} onChange={e => setWorkSettings(s => ({ ...s, standardDailyHours: Number(e.target.value) || 8 }))} /></label><label>Opening Banked Hours<input type="number" min="0" step="0.25" value={workSettings.openingBankedHours} onChange={e => setWorkSettings(s => ({ ...s, openingBankedHours: Number(e.target.value) || 0 }))} /></label><div className="setting-note">B.C. statutory holidays are excluded from regular expected workdays. Save with Sync Now after changing these values.</div></div>}</Panel>
-        <Panel title={report.label}><div className="stats"><Stat label="Expected Hours" value={round2(report.expected)} sub={`${report.scheduledDays} regular workdays at ${fmtHours(workSettings.standardDailyHours)} each`} /><Stat label="Actual Worked" value={round2(report.net)} sub={`${report.daysAtWork} day(s) with completed work`} /><Stat label="Paid Coverage" value={round2(report.paidCovered)} sub="Worked + vacation + explicit banked coverage" /></div><div className="stats"><Stat label="Banked Earned" value={`+${round2(report.bankedEarned)}`} sub="Overtime on regular days, plus non-scheduled work" /><Stat label="Banked Used" value={round2(report.bankedUsed)} sub="Explicit banked time entries only" /><Stat label="Vacation Used" value={round2(report.vacation)} sub={`${report.vacationDays} day(s) logged, separate from banked`} /></div><div className="readouts"><Readout label="Actual vs Expected" value={`${report.difference >= 0 ? '+' : ''}${round2(report.difference)}h`} cyan={report.difference >= 0} amber={report.difference < 0} /><Readout label="Current Banked Balance" value={fmtHours(allTime.balance)} cyan /><Readout label="Range" value={`${formatDate(report.start)} - ${formatDate(report.end)}`} /></div><div className="report-note">Actual vs Expected compares completed worked time with expected scheduled hours only. Paid Coverage is the place to see worked time plus vacation and explicit banked coverage. Work completed on stat holidays and other non-scheduled days is counted as banked earned.</div><button className="export-btn" onClick={exportCsv}>Export CSV</button></Panel>
+        <Panel title={report.label}><div className="stats"><Stat label="Expected Hours" value={round2(report.expected)} sub={`${report.scheduledDays} regular workdays at ${fmtHours(workSettings.standardDailyHours)} each`} /><Stat label="Actual Worked" value={round2(report.net)} sub={`${report.daysAtWork} day(s) with completed work`} /><Stat label="Paid Coverage" value={round2(report.paidCovered)} sub="Worked + vacation + explicit banked coverage" /></div><div className="stats"><Stat label="Banked Earned" value={`+${round2(report.bankedEarned)}`} sub="Overtime on regular days, plus non-scheduled work" /><Stat label="Banked Used" value={round2(report.bankedUsed)} sub="Explicit banked time entries only" /><Stat label="Vacation Used" value={round2(report.vacation)} sub={`${report.vacationDays} day(s) logged, separate from banked`} /></div><div className="readouts"><Readout label="Actual vs Expected" value={`${report.difference >= 0 ? '+' : ''}${round2(report.difference)}h`} cyan={report.difference >= 0} amber={report.difference < 0} /><Readout label="Current Banked Balance" value={fmtHours(allTime.balance)} cyan /><Readout label="Range" value={`${formatDate(report.start)} - ${formatDate(report.end)}`} /></div><div className="report-note">Actual vs Expected compares completed worked time with expected scheduled hours only. Paid Coverage is the place to see worked time plus vacation and explicit banked coverage. Work completed on stat holidays and other non-scheduled days is counted as banked earned.</div><div className="report-actions"><button className="export-btn" onClick={exportCsv}>Export CSV</button><button className="export-btn" onClick={printReport}>Print / Save PDF</button></div></Panel>
         <NeedsReviewPanel needsReview={report.needsReview} onAddWork={addWorkForDay} onEditDay={editFirstRecordForDay} onLogVacation={(day, hours) => openTimeOffForDay('vacation', day, hours)} onUseBanked={(day, hours) => openTimeOffForDay('banked', day, hours)} />
         <Panel title="Report Records"><RecordList rows={report.rows} standardHours={Number(workSettings.standardDailyHours || 8)} onEdit={setEditing} onDelete={deleteShift} onApplyBanked={applyBankedToShortDay} /></Panel>
       </>}
     </div>
+    <PrintReport report={report} allTime={allTime} workSettings={workSettings} generatedAt={now} />
     {editing && <EditModal shift={editing} standardHours={Number(workSettings.standardDailyHours || 8)} onCancel={() => setEditing(null)} onSave={saveEdit} />}
   </div>;
 }
@@ -677,6 +684,79 @@ function BankedBreakdown({ allTime, openingBankedHours }) {
     <div><span>All-time banked earned</span><strong className="cyan">+{fmtHours(allTime.earned)}</strong></div>
     <div><span>All-time banked used</span><strong className="amber">-{fmtHours(allTime.used)}</strong></div>
   </div>;
+}
+function PrintReport({ report, allTime, workSettings, generatedAt }) {
+  const opening = positiveHours(workSettings.openingBankedHours);
+  const records = (report.rows || []).filter(entry => isCompletedWorkEntry(entry) || positiveHours(entry.vacationHours) > 0 || positiveHours(entry.bankedHoursUsed) > 0);
+  const reviewRows = report.needsReview?.rows || [];
+  const summary = [
+    ['Expected Hours', fmtHours(report.expected)],
+    ['Actual Worked', fmtHours(report.net)],
+    ['Vacation Used', fmtHours(report.vacation)],
+    ['Banked Used', fmtHours(report.bankedUsed)],
+    ['Paid Coverage', fmtHours(report.paidCovered)],
+    ['Actual vs Expected', fmtSignedHours(report.difference)],
+    ['Banked Earned', `+${fmtHours(report.bankedEarned)}`],
+    ['Current Banked Balance', fmtHours(allTime.balance)],
+  ];
+  const typeLabel = entry => {
+    const type = entryType(entry);
+    return type === 'vacation' ? 'Vacation' : type === 'banked' ? 'Banked Time' : 'Worked';
+  };
+  return <article className="print-report" aria-label="Printable time and banked summary">
+    <header className="print-header">
+      <div>
+        <p>Work Timer</p>
+        <h1>Time &amp; Banked Summary</h1>
+      </div>
+      <div>
+        <strong>{formatDate(report.start)} - {formatDate(report.end)}</strong>
+        <span>Generated {formatDate(generatedAt)} at {formatTime(generatedAt)}</span>
+      </div>
+    </header>
+
+    <section className="print-section print-avoid">
+      <h2>Summary</h2>
+      <div className="print-summary-grid">{summary.map(([label, value]) => <div key={label}><span>{label}</span><strong>{value}</strong></div>)}</div>
+    </section>
+
+    <section className="print-section print-avoid">
+      <h2>Banked Balance Calculation</h2>
+      <div className="print-calc">
+        {opening > 0 && <div><span>Opening Banked Balance</span><strong>{fmtHours(opening)}</strong></div>}
+        <div><span>Banked Earned</span><strong>+{fmtHours(report.bankedEarned)}</strong></div>
+        <div><span>Banked Used</span><strong>-{fmtHours(report.bankedUsed)}</strong></div>
+        <div><span>Current Banked Balance</span><strong>{fmtHours(allTime.balance)}</strong></div>
+      </div>
+      <p className="print-note">Banked earned includes overtime on regular workdays and completed work on non-scheduled days. Vacation is tracked separately.</p>
+    </section>
+
+    <section className="print-section print-avoid">
+      <h2>Record Review</h2>
+      {reviewRows.length ? <div className="print-review-list">{reviewRows.map(row => <div key={row.day}><strong>{formatDay(row.day)}</strong><span>{row.status}</span><b>{fmtHours(row.remaining)} unaccounted</b></div>)}</div> : <p className="print-clear">All regular scheduled workdays in this report period are fully accounted for.</p>}
+    </section>
+
+    <section className="print-section">
+      <h2>Detailed Records</h2>
+      {records.length ? <table className="print-table">
+        <thead><tr><th>Date</th><th>Type</th><th>Clock In</th><th>Clock Out</th><th>Worked</th><th>Vacation</th><th>Banked Used</th><th>Notes</th></tr></thead>
+        <tbody>{records.map(entry => {
+          const h = calcHours(entry);
+          const type = entryType(entry);
+          return <tr key={entry.id}>
+            <td>{formatDay(entryDay(entry))}</td>
+            <td>{typeLabel(entry)}</td>
+            <td>{type === 'worked' ? formatTime(entry.clockIn) : '--'}</td>
+            <td>{type === 'worked' && entry.clockOut ? formatTime(entry.clockOut) : '--'}</td>
+            <td>{isCompletedWorkEntry(entry) ? fmtHours(h.net) : '--'}</td>
+            <td>{positiveHours(entry.vacationHours) > 0 ? fmtHours(entry.vacationHours) : '--'}</td>
+            <td>{positiveHours(entry.bankedHoursUsed) > 0 ? fmtHours(entry.bankedHoursUsed) : '--'}</td>
+            <td>{entry.notes || ''}</td>
+          </tr>;
+        })}</tbody>
+      </table> : <p className="print-clear">No records found for this report period.</p>}
+    </section>
+  </article>;
 }
 function NeedsReviewPanel({ needsReview, onAddWork, onEditDay, onLogVacation, onUseBanked }) {
   const rows = needsReview?.rows || [];
