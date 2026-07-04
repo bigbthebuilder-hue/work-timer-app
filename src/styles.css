@@ -960,6 +960,84 @@ textarea {
   font-size: 14px;
   line-height: 1.4;
 }
+.report-note,
+.banked-breakdown,
+.review-total,
+.review-row {
+  margin-top: 12px;
+  border: 1px solid rgba(148,163,184,.22);
+  border-radius: 12px;
+  background: rgba(2,6,23,.62);
+  padding: 12px;
+}
+.report-note {
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.4;
+}
+.banked-breakdown {
+  display: grid;
+  gap: 8px;
+}
+.banked-breakdown div,
+.review-main {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  align-items: center;
+}
+.banked-breakdown span,
+.review-total span,
+.review-main span {
+  color: var(--muted);
+}
+.review-total {
+  display: grid;
+  gap: 5px;
+}
+.review-total strong {
+  color: #fde68a;
+  font-size: 22px;
+}
+.review-list {
+  display: grid;
+  gap: 10px;
+  margin-top: 10px;
+}
+.review-row.missing {
+  border-color: rgba(251,191,36,.36);
+}
+.review-main {
+  align-items: flex-start;
+}
+.review-main strong {
+  min-width: 96px;
+  color: var(--text);
+}
+.review-main span {
+  flex: 1;
+}
+.review-main b {
+  color: #fde68a;
+  white-space: nowrap;
+}
+.review-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+.review-actions button {
+  min-height: 38px;
+  border: 1px solid rgba(103,232,249,.42);
+  border-radius: 10px;
+  background: rgba(8,145,178,.20);
+  color: #cffafe;
+  padding: 8px 11px;
+  font-size: 12px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
 .actions .banked-action {
   border-color: rgba(251,191,36,.58);
   background: rgba(120,53,15,.35);
@@ -971,5 +1049,19 @@ textarea {
   }
   .actions .banked-action {
     width: 100%;
+  }
+  .banked-breakdown div,
+  .review-main {
+    display: grid;
+    gap: 5px;
+  }
+  .review-main strong {
+    min-width: 0;
+  }
+  .review-main b {
+    white-space: normal;
+  }
+  .review-actions button {
+    flex: 1 1 140px;
   }
 }

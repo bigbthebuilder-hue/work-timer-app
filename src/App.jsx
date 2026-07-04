@@ -95,18 +95,64 @@ function fmtHours(hours) {
   return `${whole}h ${pad(mins)}m`;
 }
 function round2(n) { return Math.round((Number(n) || 0) * 100) / 100; }
+function positiveHours(value) { return Math.max(0, Number(value) || 0); }
 function bankedEarnedForRows(rows, defaultDailyHours) {
   const byDay = new Map();
   rows.forEach(entry => {
     if (!isCompletedWorkEntry(entry)) return;
     const day = entryDay(entry);
-    if (!day || !isRegularWorkday(day)) return;
-    const current = byDay.get(day) || { worked: 0, scheduled: 0 };
+    if (!day) return;
+    const regular = isRegularWorkday(day);
+    const entryScheduled = Number(entry.scheduledHours);
+    const defaultScheduled = Number(defaultDailyHours);
+    const scheduledHours = Number.isFinite(entryScheduled) && entryScheduled > 0 ? entryScheduled : Number.isFinite(defaultScheduled) && defaultScheduled > 0 ? defaultScheduled : 8;
+    const current = byDay.get(day) || { worked: 0, scheduled: 0, regular };
     current.worked += calcHours(entry).net;
-    current.scheduled = Math.max(current.scheduled, Number(entry.scheduledHours || defaultDailyHours || 8));
+    current.regular = regular;
+    current.scheduled = regular ? Math.max(current.scheduled, scheduledHours) : 0;
     byDay.set(day, current);
   });
-  return round2(Array.from(byDay.values()).reduce((total, day) => total + Math.max(0, day.worked - day.scheduled), 0));
+  return round2(Array.from(byDay.values()).reduce((total, day) => total + (day.regular ? Math.max(0, day.worked - day.scheduled) : day.worked), 0));
+}
+function buildNeedsReview(rows, workdays, standardDailyHours) {
+  const expected = positiveHours(standardDailyHours || 0);
+  if (!expected) return { rows: [], total: 0 };
+  const byDay = new Map(workdays.map(day => [day, { day, worked: 0, vacation: 0, banked: 0, records: [] }]));
+  rows.forEach(entry => {
+    const day = entryDay(entry);
+    const summary = byDay.get(day);
+    if (!summary) return;
+    summary.records.push(entry);
+    if (isCompletedWorkEntry(entry)) summary.worked += calcHours(entry).net;
+    summary.vacation += positiveHours(entry.vacationHours);
+    summary.banked += positiveHours(entry.bankedHoursUsed);
+  });
+  const reviewRows = Array.from(byDay.values()).map(day => {
+    const worked = round2(day.worked);
+    const vacation = round2(day.vacation);
+    const banked = round2(day.banked);
+    const covered = round2(worked + vacation + banked);
+    const remaining = round2(Math.max(0, expected - covered));
+    const parts = [
+      worked > 0 ? `Worked ${fmtHours(worked)}` : '',
+      vacation > 0 ? `Vacation ${fmtHours(vacation)}` : '',
+      banked > 0 ? `Banked ${fmtHours(banked)}` : '',
+    ].filter(Boolean);
+    return {
+      ...day,
+      worked,
+      vacation,
+      banked,
+      covered,
+      remaining,
+      status: parts.length ? parts.join(' • ') : 'No record entered',
+      hasCoverage: parts.length > 0,
+    };
+  }).filter(day => day.remaining > 0.01);
+  return {
+    rows: reviewRows,
+    total: round2(reviewRows.reduce((total, day) => total + day.remaining, 0)),
+  };
 }
 function startOfWeek(date) {
   const d = safeDate(date);
@@ -452,7 +498,15 @@ export default function App() {
     if (!syncSettings.scriptUrl || !syncSettings.token) { setShowSyncSetup(true); setSyncStatus(s => ({ ...s, state: 'error', message: 'Sync not set up' })); return; }
     runProcess('pull', async () => { try { setSyncStatus(s => ({ ...s, state: 'syncing', message: 'Restoring from Google Sheets...' })); const [rowsResult, settingsResult] = await Promise.all([jsonp(syncUrl('list')), jsonp(syncUrl('getSettings'))]); const cloudRows = Array.isArray(rowsResult.rows) ? rowsResult.rows : []; setShifts(mergeShifts(shifts, cloudRows)); if (settingsResult && settingsResult.settings) setWorkSettings(s => ({ ...DEFAULT_WORK_SETTINGS, ...s, ...settingsResult.settings })); setSyncQueue([]); setSyncStatus({ state: 'ok', message: `Restored ${cloudRows.length} cloud record(s)`, lastSync: new Date().toISOString() }); } catch (err) { setSyncStatus(s => ({ ...s, state: 'error', message: err.message || 'Restore failed' })); } });
   }
-  function addManualShift() { const today = dateKey(); const shift = { id: uid(), date: today, entryType: 'worked', clockIn: combineDateTime(today, '08:00'), clockOut: combineDateTime(today, '17:00'), lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: 'Manual entry', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; saveShift(shift); setEditing(shift); }
+  function workDraftForDay(day = dateKey()) { return { id: uid(), date: day, entryType: 'worked', clockIn: combineDateTime(day, '08:00'), clockOut: combineDateTime(day, '17:00'), lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: 'Manual entry', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; }
+  function addManualShift() { const shift = workDraftForDay(); saveShift(shift); setEditing(shift); }
+  function addWorkForDay(day) { setEditing(workDraftForDay(day)); }
+  function editFirstRecordForDay(day, records = []) {
+    const existing = records.find(isWorkedEntry) || records[0];
+    if (existing) setEditing(existing);
+    else addWorkForDay(day);
+  }
+  function openTimeOffForDay(type, day, hours) { setTimeOffEntry({ type, startDay: day, endDay: day, hours: round2(hours || workSettings.standardDailyHours || 8) }); }
   function clockIn() { if (activeShift) return; runProcess('clockIn', () => { setLunchMinutes(0); saveShift({ id: uid(), date: dateKey(), entryType: 'worked', clockIn: new Date().toISOString(), clockOut: '', lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }); }
   function clockOut() { if (!activeShift) return; runProcess('clockOut', () => { const next = { ...activeShift, clockOut: new Date().toISOString(), lunchMinutes, updatedAt: new Date().toISOString() }; saveShift(next); setLunchMinutes(0); const worked = calcHours(next).net; const standard = Number(workSettings.standardDailyHours || 8); if (isRegularWorkday(next.date) && worked < standard - 0.01) setCoveragePrompt({ shift: next, worked, remaining: round2(standard - worked) }); }); }
   function saveEdit(data) { runProcess('update', () => { const day = data.shiftDate || entryDay(data); const clockIn = data.clockInTime ? combineDateTime(day, data.clockInTime) : ''; const clockOut = data.clockOutTime ? combineDateTime(day, data.clockOutTime) : ''; saveShift({ ...data, date: day, entryType: data.entryType || 'worked', clockIn, clockOut, lunchMinutes: Number(data.lunchMinutes || 0), vacationHours: Number(data.vacationHours || 0), bankedHoursUsed: Number(data.bankedHoursUsed || 0), scheduledHours: Number(data.scheduledHours || workSettings.standardDailyHours || 8), notes: data.notes || '', updatedAt: new Date().toISOString() }); setEditing(null); }); }
@@ -528,9 +582,11 @@ export default function App() {
     const expected = round2(workdays.length * Number(workSettings.standardDailyHours || 8));
     const bankedEarned = bankedEarnedForRows(rows, Number(workSettings.standardDailyHours || 8));
     const paidCovered = round2(net + vacation + bankedUsed);
+    const needsReview = buildNeedsReview(rows, workdays, Number(workSettings.standardDailyHours || 8));
     return {
       ...r,
       rows,
+      needsReview,
       gross: round2(gross),
       net: round2(net),
       lunch: round2(lunch),
@@ -579,7 +635,7 @@ export default function App() {
   return <div className="page">
     {process && <Processing process={process} />}
     {coveragePrompt && <CoverageModal prompt={coveragePrompt} onCancel={() => setCoveragePrompt(null)} onUseBanked={() => { const next = { ...coveragePrompt.shift, bankedHoursUsed: round2(Number(coveragePrompt.shift.bankedHoursUsed || 0) + coveragePrompt.remaining), updatedAt: new Date().toISOString() }; saveShift(next); setCoveragePrompt(null); }} onUseVacation={() => { const next = { ...coveragePrompt.shift, vacationHours: round2(Number(coveragePrompt.shift.vacationHours || 0) + coveragePrompt.remaining), updatedAt: new Date().toISOString() }; saveShift(next); setCoveragePrompt(null); }} />}
-    {timeOffEntry && <TimeOffModal type={timeOffEntry} standardHours={Number(workSettings.standardDailyHours || 8)} onCancel={() => setTimeOffEntry(null)} onSave={saveTimeOff} />}
+    {timeOffEntry && <TimeOffModal type={typeof timeOffEntry === 'string' ? timeOffEntry : timeOffEntry.type} initialStartDay={typeof timeOffEntry === 'string' ? '' : timeOffEntry.startDay} initialEndDay={typeof timeOffEntry === 'string' ? '' : timeOffEntry.endDay} initialHours={typeof timeOffEntry === 'string' ? '' : timeOffEntry.hours} standardHours={Number(workSettings.standardDailyHours || 8)} onCancel={() => setTimeOffEntry(null)} onSave={saveTimeOff} />}
     <div className="shell">
       <header className="top"><div><div className="eyebrow"><span className="power-dot" /> Time Control Console</div><h1>Work Timer</h1><p>Work hours, vacation use, and banked-time planning.</p></div><div className="clock-card"><div className="digital">{now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' })}</div><div className="date-line">{now.toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric', year: 'numeric' })}</div></div></header>
       <nav className="tabs"><button className={`tab ${tab === 'clock' ? 'active' : ''}`} onClick={() => setTab('clock')}>Clock</button><button className={`tab ${tab === 'reports' ? 'active' : ''}`} onClick={() => setTab('reports')}>Reports</button></nav>
@@ -599,8 +655,9 @@ export default function App() {
           {rangeType === 'custom' && <div className="input-grid report-picker"><div className="calendar-field-wrap"><label>Choose Report Dates</label><CalendarField mode="range" start={customRange.start} end={customRange.end} buttonLabel={dayRangeLabel(customRange.start, customRange.end)} onRangeChange={({ start, end }) => setCustomRange({ start, end })} /></div></div>}
           {(rangeType === 'mtd' || rangeType === 'ytd') && <div className="report-picker-note">{rangeType === 'mtd' ? 'Month to date uses the first day of this month through today.' : 'Year to date uses January 1 through today, starting no earlier than your first saved record.'}</div>}
         </Panel>
-        <Panel title="Banked Time Setup"><div className="settings-summary"><div><strong>{fmtHours(allTime.balance)}</strong><small>Current calculated banked balance</small></div><button onClick={() => setShowWorkSettings(!showWorkSettings)}>{showWorkSettings ? 'Hide Setup' : 'Edit Setup'}</button></div>{showWorkSettings && <div className="input-grid work-settings"><label>Standard Workday Hours<input type="number" min="1" max="24" step="0.25" value={workSettings.standardDailyHours} onChange={e => setWorkSettings(s => ({ ...s, standardDailyHours: Number(e.target.value) || 8 }))} /></label><label>Opening Banked Hours<input type="number" min="0" step="0.25" value={workSettings.openingBankedHours} onChange={e => setWorkSettings(s => ({ ...s, openingBankedHours: Number(e.target.value) || 0 }))} /></label><div className="setting-note">B.C. statutory holidays are excluded from regular expected workdays. Save with Sync Now after changing these values.</div></div>}</Panel>
-        <Panel title={report.label}><div className="stats"><Stat label="Expected Hours" value={round2(report.expected)} sub={`${report.scheduledDays} regular workdays`} /><Stat label="Actual Worked" value={round2(report.net)} sub={`${report.daysAtWork} days at work`} /><Stat label="Paid Coverage" value={round2(report.paidCovered)} sub="Worked + vacation + banked" /></div><div className="stats"><Stat label="Banked Earned" value={`+${round2(report.bankedEarned)}`} sub="Above regular schedule" /><Stat label="Banked Used" value={round2(report.bankedUsed)} sub="Taken as paid time" /><Stat label="Vacation Used" value={round2(report.vacation)} sub={`${report.vacationDays} day(s) logged`} /></div><div className="readouts"><Readout label="Actual vs Expected" value={`${report.difference >= 0 ? '+' : ''}${round2(report.difference)}h`} cyan={report.difference >= 0} amber={report.difference < 0} /><Readout label="Banked Balance" value={fmtHours(allTime.balance)} cyan /><Readout label="Range" value={`${formatDate(report.start)} - ${formatDate(report.end)}`} /></div><button className="export-btn" onClick={exportCsv}>Export CSV</button></Panel>
+        <Panel title="Banked Time Setup"><div className="settings-summary"><div><strong>{fmtHours(allTime.balance)}</strong><small>Current calculated banked balance</small></div><button onClick={() => setShowWorkSettings(!showWorkSettings)}>{showWorkSettings ? 'Hide Setup' : 'Edit Setup'}</button></div><BankedBreakdown allTime={allTime} openingBankedHours={workSettings.openingBankedHours} />{showWorkSettings && <div className="input-grid work-settings"><label>Standard Workday Hours<input type="number" min="1" max="24" step="0.25" value={workSettings.standardDailyHours} onChange={e => setWorkSettings(s => ({ ...s, standardDailyHours: Number(e.target.value) || 8 }))} /></label><label>Opening Banked Hours<input type="number" min="0" step="0.25" value={workSettings.openingBankedHours} onChange={e => setWorkSettings(s => ({ ...s, openingBankedHours: Number(e.target.value) || 0 }))} /></label><div className="setting-note">B.C. statutory holidays are excluded from regular expected workdays. Save with Sync Now after changing these values.</div></div>}</Panel>
+        <Panel title={report.label}><div className="stats"><Stat label="Expected Hours" value={round2(report.expected)} sub={`${report.scheduledDays} regular workdays at ${fmtHours(workSettings.standardDailyHours)} each`} /><Stat label="Actual Worked" value={round2(report.net)} sub={`${report.daysAtWork} day(s) with completed work`} /><Stat label="Paid Coverage" value={round2(report.paidCovered)} sub="Worked + vacation + explicit banked coverage" /></div><div className="stats"><Stat label="Banked Earned" value={`+${round2(report.bankedEarned)}`} sub="Overtime on regular days, plus non-scheduled work" /><Stat label="Banked Used" value={round2(report.bankedUsed)} sub="Explicit banked time entries only" /><Stat label="Vacation Used" value={round2(report.vacation)} sub={`${report.vacationDays} day(s) logged, separate from banked`} /></div><div className="readouts"><Readout label="Actual vs Expected" value={`${report.difference >= 0 ? '+' : ''}${round2(report.difference)}h`} cyan={report.difference >= 0} amber={report.difference < 0} /><Readout label="Current Banked Balance" value={fmtHours(allTime.balance)} cyan /><Readout label="Range" value={`${formatDate(report.start)} - ${formatDate(report.end)}`} /></div><div className="report-note">Actual vs Expected compares completed worked time with expected scheduled hours only. Paid Coverage is the place to see worked time plus vacation and explicit banked coverage. Work completed on stat holidays and other non-scheduled days is counted as banked earned.</div><button className="export-btn" onClick={exportCsv}>Export CSV</button></Panel>
+        <NeedsReviewPanel needsReview={report.needsReview} onAddWork={addWorkForDay} onEditDay={editFirstRecordForDay} onLogVacation={(day, hours) => openTimeOffForDay('vacation', day, hours)} onUseBanked={(day, hours) => openTimeOffForDay('banked', day, hours)} />
         <Panel title="Report Records"><RecordList rows={report.rows} standardHours={Number(workSettings.standardDailyHours || 8)} onEdit={setEditing} onDelete={deleteShift} onApplyBanked={applyBankedToShortDay} /></Panel>
       </>}
     </div>
@@ -613,6 +670,26 @@ function SyncPanel({ syncSettings, setSyncSettings, syncStatus, pendingCount, sh
 function Readout({ label, value, cyan, amber }) { return <div className="readout"><div>{label}</div><strong className={cyan ? 'cyan' : amber ? 'amber' : ''}>{value}</strong></div>; }
 function LunchButton({ active, label, sub, onClick }) { return <button className={`lunch-btn ${active ? 'active' : ''}`} onClick={onClick}>{label}<small>{sub}</small></button>; }
 function Stat({ label, value, sub }) { return <div className="stat"><div>{label}</div><strong>{value}</strong><small>{sub}</small></div>; }
+function BankedBreakdown({ allTime, openingBankedHours }) {
+  const opening = positiveHours(openingBankedHours);
+  return <div className="banked-breakdown">
+    {opening > 0 && <div><span>Opening banked balance:</span><strong>{fmtHours(opening)}</strong></div>}
+    <div><span>All-time banked earned</span><strong className="cyan">+{fmtHours(allTime.earned)}</strong></div>
+    <div><span>All-time banked used</span><strong className="amber">-{fmtHours(allTime.used)}</strong></div>
+  </div>;
+}
+function NeedsReviewPanel({ needsReview, onAddWork, onEditDay, onLogVacation, onUseBanked }) {
+  const rows = needsReview?.rows || [];
+  return <Panel title="Needs Review: Missing or Incomplete Records"><div className="review-total"><strong>{fmtHours(needsReview?.total || 0)} needs review</strong><span>Regular workdays where worked time, vacation, and explicit banked coverage are below expected hours.</span></div>{rows.length ? <div className="review-list">{rows.map(row => <div className={`review-row ${row.hasCoverage ? 'incomplete' : 'missing'}`} key={row.day}>
+    <div className="review-main"><strong>{formatDay(row.day)}</strong><span>{row.status}</span><b>{fmtHours(row.remaining)} unaccounted</b></div>
+    <div className="review-actions">
+      <button onClick={() => onAddWork(row.day)}>Add Work</button>
+      <button onClick={() => onLogVacation(row.day, row.remaining)}>Log Vacation</button>
+      <button onClick={() => onUseBanked(row.day, row.remaining)}>Use Banked Time</button>
+      {row.records.length > 0 && <button onClick={() => onEditDay(row.day, row.records)}>Edit Day</button>}
+    </div>
+  </div>)}</div> : <div className="empty">No missing or incomplete regular workdays in this range.</div>}</Panel>;
+}
 function RecordList({ rows, onEdit, onDelete, standardHours = 8, onApplyBanked }) {
   if (!rows.length) return <div className="empty">No records found.</div>;
   return <div className="records">{rows.map(s => {
@@ -644,8 +721,8 @@ function EditModal({ shift, standardHours, onCancel, onSave }) {
   return <div className="modal"><div className="edit-box"><h3>Edit Record</h3><div className="edit-grid"><div className="wide calendar-field-wrap"><label>Date</label><CalendarField mode="single" value={shiftDate} buttonLabel={formatDay(shiftDate)} onChange={setShiftDate} /></div>{type === 'worked' && <><label>Clock In<input type="time" value={clockInTime} onChange={e => setClockInTime(e.target.value)} /></label><label>Clock Out<input type="time" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} /></label><label>Lunch<select value={lunch} onChange={e => setLunch(e.target.value)}><option value="0">No Lunch</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></label></>}<label>Vacation Hours<input type="number" min="0" step="0.25" value={vacationHours} onChange={e => setVacationHours(e.target.value)} /></label><label>Banked Hours Used<input type="number" min="0" step="0.25" value={bankedHoursUsed} onChange={e => setBankedHoursUsed(e.target.value)} /></label><label className="wide">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} /></label></div><div className="modal-actions"><button onClick={onCancel}>Cancel</button><button className="save" onClick={() => onSave({ ...shift, shiftDate, clockInTime, clockOutTime, lunchMinutes: lunch, vacationHours, bankedHoursUsed, scheduledHours: shift.scheduledHours || standardHours, notes })}>Save</button></div></div></div>;
 }
 function CoverageModal({ prompt, onCancel, onUseBanked, onUseVacation }) { return <div className="modal"><div className="edit-box"><h3>Complete Todayâ€™s Paid Hours</h3><div className="coverage-summary"><strong>{fmtHours(prompt.worked)} worked</strong><span>of your {fmtHours(prompt.worked + prompt.remaining)} scheduled day</span><b>{fmtHours(prompt.remaining)} remaining</b></div><p className="modal-copy">Choose whether to use banked time or vacation for the remaining hours. You can also leave this as a short day and adjust it later.</p><div className="coverage-actions"><button className="save" onClick={onUseBanked}>Use {fmtHours(prompt.remaining)} Banked</button><button onClick={onUseVacation}>Use Vacation</button><button className="coverage-cancel" onClick={onCancel}>Leave Short Day</button></div></div></div>; }
-function TimeOffModal({ type, standardHours, onCancel, onSave }) {
-  const [startDay, setStartDay] = useState(dateKey()); const [endDay, setEndDay] = useState(dateKey()); const [hours, setHours] = useState(String(standardHours)); const [notes, setNotes] = useState('');
+function TimeOffModal({ type, standardHours, initialStartDay = '', initialEndDay = '', initialHours = '', onCancel, onSave }) {
+  const [startDay, setStartDay] = useState(initialStartDay || dateKey()); const [endDay, setEndDay] = useState(initialEndDay || initialStartDay || dateKey()); const [hours, setHours] = useState(String(initialHours || standardHours)); const [notes, setNotes] = useState('');
   const days = startDay && endDay ? listRegularWorkdays(parseDay(startDay), parseDay(endDay)) : [];
   return <div className="modal"><div className="edit-box"><h3>{type === 'vacation' ? 'Log Vacation' : 'Use Banked Time'}</h3><div className="edit-grid"><div className="wide calendar-field-wrap"><label>{type === 'vacation' ? 'Vacation Dates' : 'Banked-Time Dates'}</label><CalendarField mode="range" start={startDay} end={endDay} buttonLabel={dayRangeLabel(startDay, endDay)} onRangeChange={({ start, end }) => { setStartDay(start); setEndDay(end); }} /></div><div className="range-summary wide"><strong>{days.length} regular workday{days.length === 1 ? '' : 's'} selected</strong><span>Weekends and B.C. statutory holidays are skipped.</span></div><label>Hours Per Selected Day<input type="number" min="0.25" max="24" step="0.25" value={hours} onChange={e => setHours(e.target.value)} /></label><div className="range-summary"><strong>{fmtHours((Number(hours) || 0) * days.length)} total</strong><span>{type === 'vacation' ? 'Vacation recorded' : 'Banked time deducted'}</span></div><label className="wide">Notes<textarea placeholder={type === 'vacation' ? 'Optional vacation note' : 'Optional banked-time note'} value={notes} onChange={e => setNotes(e.target.value)} /></label></div><div className="modal-actions"><button onClick={onCancel}>Cancel</button><button className="save" onClick={() => onSave({ type, startDay, endDay, hours: Number(hours) || 0, notes })}>Save</button></div></div></div>;
 }
