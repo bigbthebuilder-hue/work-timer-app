@@ -38,6 +38,50 @@ button {
   padding: 4px;
 }
 
+.startup-error {
+  min-height: 100vh;
+  display: grid;
+  place-items: center;
+  padding: 16px;
+}
+
+.startup-error section {
+  width: 100%;
+  max-width: 560px;
+  border: 1px solid rgba(251,113,133,.55);
+  background: linear-gradient(135deg, rgba(255,255,255,.07), transparent 22%), rgba(2,6,23,.90);
+  border-radius: 18px;
+  padding: 16px;
+  box-shadow: 0 18px 52px rgba(0,0,0,.45);
+}
+
+.startup-error p {
+  color: var(--muted);
+  line-height: 1.4;
+}
+
+.startup-reload {
+  min-height: 42px;
+  padding: 10px 14px;
+  border-radius: 11px;
+  border: 1px solid rgba(103,232,249,.48);
+  background: rgba(8,145,178,.22);
+  color: #cffafe;
+  font-size: 13px;
+  font-weight: 900;
+  text-transform: uppercase;
+}
+
+.startup-error pre {
+  white-space: pre-wrap;
+  word-break: break-word;
+  border: 1px solid rgba(148, 163, 184, .22);
+  background: rgba(2,6,23,.75);
+  color: #ffe4e6;
+  border-radius: 12px;
+  padding: 12px;
+}
+
 .shell {
   width: 100%;
   border: 1px solid var(--line);
