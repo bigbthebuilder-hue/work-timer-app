@@ -147,10 +147,13 @@ function entryType(entry) { return entry.entryType || 'worked'; }
 function entryDay(entry) { return normalizeDay(entry?.date) || (entry?.clockIn ? dateKey(entry.clockIn) : '') || dateKey(entry?.updatedAt); }
 function isWorkedEntry(entry) { return entryType(entry) === 'worked'; }
 function isCompletedWorkEntry(entry) { return isWorkedEntry(entry) && !!entry.clockOut; }
-function observedDay(year, monthIndex, day) {
-  const d = new Date(year, monthIndex, day, 12);
-  if (d.getDay() === 6) d.setDate(d.getDate() + 2);
-  if (d.getDay() === 0) d.setDate(d.getDate() + 1);
+function fixedHoliday(year, monthIndex, day) {
+  return dateKey(new Date(year, monthIndex, day, 12));
+}
+function canadaDay(year) {
+  const d = new Date(year, 6, 1, 12);
+  // B.C. replaces Canada Day with Monday July 2 only when July 1 is a Sunday.
+  if (d.getDay() === 0) d.setDate(2);
   return dateKey(d);
 }
 function nthWeekday(year, monthIndex, weekday, nth) {
@@ -160,7 +163,8 @@ function nthWeekday(year, monthIndex, weekday, nth) {
   return dateKey(d);
 }
 function mondayBefore(year, monthIndex, day) {
-  const d = new Date(year, monthIndex, day, 12);
+  // Victoria Day is the first Monday strictly before May 25.
+  const d = new Date(year, monthIndex, day - 1, 12);
   const offset = (d.getDay() + 6) % 7;
   d.setDate(d.getDate() - offset);
   return dateKey(d);
@@ -177,17 +181,17 @@ function bcStatHolidays(year) {
   const easter = easterSunday(year);
   const goodFriday = new Date(easter); goodFriday.setDate(easter.getDate() - 2);
   return [
-    { day: observedDay(year, 0, 1), name: "New Year's Day" },
+    { day: fixedHoliday(year, 0, 1), name: "New Year's Day" },
     { day: nthWeekday(year, 1, 1, 3), name: 'Family Day' },
     { day: dateKey(goodFriday), name: 'Good Friday' },
     { day: mondayBefore(year, 4, 25), name: 'Victoria Day' },
-    { day: observedDay(year, 6, 1), name: 'Canada Day' },
+    { day: canadaDay(year), name: 'Canada Day' },
     { day: nthWeekday(year, 7, 1, 1), name: 'B.C. Day' },
     { day: nthWeekday(year, 8, 1, 1), name: 'Labour Day' },
-    { day: observedDay(year, 8, 30), name: 'National Day for Truth and Reconciliation' },
+    { day: fixedHoliday(year, 8, 30), name: 'National Day for Truth and Reconciliation' },
     { day: nthWeekday(year, 9, 1, 2), name: 'Thanksgiving Day' },
-    { day: observedDay(year, 10, 11), name: 'Remembrance Day' },
-    { day: observedDay(year, 11, 25), name: 'Christmas Day' },
+    { day: fixedHoliday(year, 10, 11), name: 'Remembrance Day' },
+    { day: fixedHoliday(year, 11, 25), name: 'Christmas Day' },
   ];
 }
 function getBCStatHoliday(day) {
@@ -585,4 +589,8 @@ function openPrintableReport(report, allTime, workSettings, generatedAt) {
 }
 function Processing({ process }) { return <div className="process"><div className="process-box"><div className="process-head"><strong>{process.type} Sequence</strong><span>Running</span></div><div className="process-feed">{process.lines.map((line, i) => <div key={i}><span>&gt;</span> {line}{i === process.lines.length - 1 && <b className="cursor" />}</div>)}</div><div className="progress"><i style={{ width: `${Math.min(100, (process.lines.length / 4) * 100)}%` }} /></div></div></div>; }
 
-export function StartupErrorBoundary({ children }) { return children; }
+
+// Kept as a named export because main.jsx imports it around the app root.
+export function StartupErrorBoundary({ children }) {
+  return children;
+}
