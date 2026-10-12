@@ -51,6 +51,15 @@ function timeInputValue(dateLike) {
   const d = new Date(dateLike);
   return `${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
+function normalizeTimeInput(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return '';
+  const match = raw.match(/^(\d{1,2})(?::?(\d{2}))?$/);
+  if (!match) return raw;
+  const hours = Math.min(23, Math.max(0, Number(match[1]) || 0));
+  const minutes = Math.min(59, Math.max(0, Number(match[2] || 0) || 0));
+  return `${pad(hours)}:${pad(minutes)}`;
+}
 function combineDateTime(day, time) {
   const [h, m] = String(time || '00:00').split(':').map(Number);
   const d = typeof day === 'string' ? parseDay(day) : new Date(day);
@@ -359,7 +368,35 @@ export default function App() {
   function addManualShift() { const today = dateKey(); const shift = { id: uid(), date: today, entryType: 'worked', clockIn: combineDateTime(today, '08:00'), clockOut: combineDateTime(today, '17:00'), lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: 'Manual entry', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; saveShift(shift); setEditing(shift); }
   function clockIn() { if (activeShift) return; runProcess('clockIn', () => { setLunchMinutes(0); saveShift({ id: uid(), date: dateKey(), entryType: 'worked', clockIn: new Date().toISOString(), clockOut: '', lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }); }
   function clockOut() { if (!activeShift) return; runProcess('clockOut', () => { const next = { ...activeShift, clockOut: new Date().toISOString(), lunchMinutes, updatedAt: new Date().toISOString() }; saveShift(next); setLunchMinutes(0); const worked = calcHours(next).net; const standard = Number(workSettings.standardDailyHours || 8); if (isRegularWorkday(next.date) && worked < standard - 0.01) setCoveragePrompt({ shift: next, worked, remaining: round2(standard - worked) }); }); }
-  function saveEdit(data) { runProcess('update', () => { const day = data.shiftDate || entryDay(data); const clockIn = data.clockInTime ? combineDateTime(day, data.clockInTime) : ''; const clockOut = data.clockOutTime ? combineDateTime(day, data.clockOutTime) : ''; saveShift({ ...data, date: day, entryType: data.entryType || 'worked', clockIn, clockOut, lunchMinutes: Number(data.lunchMinutes || 0), vacationHours: Number(data.vacationHours || 0), bankedHoursUsed: Number(data.bankedHoursUsed || 0), scheduledHours: Number(data.scheduledHours || workSettings.standardDailyHours || 8), notes: data.notes || '', updatedAt: new Date().toISOString() }); setEditing(null); }); }
+  function saveEdit(data) {
+    const type = data.entryType || entryType(data) || 'worked';
+    const clockInDay = data.clockInDay || data.shiftDate || entryDay(data);
+    const clockOutDay = data.clockOutDay || clockInDay;
+    const clockInTime = normalizeTimeInput(data.clockInTime);
+    const clockOutTime = normalizeTimeInput(data.clockOutTime);
+    const clockIn = type === 'worked' && clockInTime ? combineDateTime(clockInDay, clockInTime) : '';
+    const clockOut = type === 'worked' && clockOutTime ? combineDateTime(clockOutDay, clockOutTime) : '';
+    if (type === 'worked' && clockIn && clockOut && new Date(clockOut) < new Date(clockIn)) {
+      alert('Clock out must be after clock in. Choose the correct clock-out date and time.');
+      return;
+    }
+    runProcess('update', () => {
+      saveShift({
+        ...data,
+        date: clockInDay,
+        entryType: type,
+        clockIn,
+        clockOut,
+        lunchMinutes: Number(data.lunchMinutes || 0),
+        vacationHours: Number(data.vacationHours || 0),
+        bankedHoursUsed: Number(data.bankedHoursUsed || 0),
+        scheduledHours: Number(data.scheduledHours || workSettings.standardDailyHours || 8),
+        notes: data.notes || '',
+        updatedAt: new Date().toISOString()
+      });
+      setEditing(null);
+    });
+  }
   function deleteShift(id) { if (!confirm('Delete this record?')) return; runProcess('delete', () => { const found = shifts.find(s => s.id === id); if (found) saveShift({ ...found, deleted: true, updatedAt: new Date().toISOString() }); setShifts(prev => prev.filter(s => s.id !== id)); }); }
   function applyBankedToShortDay(shift) {
     const worked = calcHours(shift).net;
@@ -494,8 +531,35 @@ function RecordList({ rows, onEdit, onDelete, standardHours = 8, onApplyBanked }
 }
 function Row({ label, value, cyan, amber }) { return <div className="record-row"><span>{label}</span><strong className={cyan ? 'cyan' : amber ? 'amber' : ''}>{value}</strong></div>; }
 function EditModal({ shift, standardHours, onCancel, onSave }) {
-  const type = entryType(shift); const [shiftDate, setShiftDate] = useState(entryDay(shift) || dateKey()); const [clockInTime, setClockInTime] = useState(timeInputValue(shift.clockIn)); const [clockOutTime, setClockOutTime] = useState(timeInputValue(shift.clockOut)); const [lunch, setLunch] = useState(String(shift.lunchMinutes || 0)); const [notes, setNotes] = useState(shift.notes || ''); const [vacationHours, setVacationHours] = useState(String(shift.vacationHours || 0)); const [bankedHoursUsed, setBankedHoursUsed] = useState(String(shift.bankedHoursUsed || 0));
-  return <div className="modal"><div className="edit-box"><h3>Edit Record</h3><div className="edit-grid"><div className="wide calendar-field-wrap"><label>Date</label><CalendarField mode="single" value={shiftDate} buttonLabel={formatDay(shiftDate)} onChange={setShiftDate} /></div>{type === 'worked' && <><label>Clock In<input type="time" value={clockInTime} onChange={e => setClockInTime(e.target.value)} /></label><label>Clock Out<input type="time" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} /></label><label>Lunch<select value={lunch} onChange={e => setLunch(e.target.value)}><option value="0">No Lunch</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></label></>}<label>Vacation Hours<input type="number" min="0" step="0.25" value={vacationHours} onChange={e => setVacationHours(e.target.value)} /></label><label>Banked Hours Used<input type="number" min="0" step="0.25" value={bankedHoursUsed} onChange={e => setBankedHoursUsed(e.target.value)} /></label><label className="wide">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} /></label></div><div className="modal-actions"><button onClick={onCancel}>Cancel</button><button className="save" onClick={() => onSave({ ...shift, shiftDate, clockInTime, clockOutTime, lunchMinutes: lunch, vacationHours, bankedHoursUsed, scheduledHours: shift.scheduledHours || standardHours, notes })}>Save</button></div></div></div>;
+  const type = entryType(shift);
+  const initialDay = entryDay(shift) || dateKey();
+  const initialClockOutDay = shift.clockOut ? dateKey(shift.clockOut) : initialDay;
+  const [clockInDay, setClockInDay] = useState(initialDay);
+  const [clockOutDay, setClockOutDay] = useState(initialClockOutDay);
+  const [clockInTime, setClockInTime] = useState(timeInputValue(shift.clockIn));
+  const [clockOutTime, setClockOutTime] = useState(timeInputValue(shift.clockOut));
+  const [lunch, setLunch] = useState(String(shift.lunchMinutes || 0));
+  const [notes, setNotes] = useState(shift.notes || '');
+  const [vacationHours, setVacationHours] = useState(String(shift.vacationHours || 0));
+  const [bankedHoursUsed, setBankedHoursUsed] = useState(String(shift.bankedHoursUsed || 0));
+
+  function cleanTime(setter) {
+    return event => setter(normalizeTimeInput(event.target.value));
+  }
+
+  return <div className="modal"><div className="edit-box"><h3>Edit Record</h3><div className="edit-grid">
+    {type === 'worked' ? <>
+      <div className="calendar-field-wrap"><label>Clock In Date</label><CalendarField mode="single" value={clockInDay} buttonLabel={formatDay(clockInDay)} onChange={day => { setClockInDay(day); if (!clockOutDay) setClockOutDay(day); }} /></div>
+      <div className="calendar-field-wrap"><label>Clock Out Date</label><CalendarField mode="single" value={clockOutDay} buttonLabel={formatDay(clockOutDay)} onChange={setClockOutDay} /></div>
+      <label>Clock In Time<input type="text" inputMode="numeric" placeholder="07:00" value={clockInTime} onChange={e => setClockInTime(e.target.value)} onBlur={cleanTime(setClockInTime)} /></label>
+      <label>Clock Out Time<input type="text" inputMode="numeric" placeholder="16:00" value={clockOutTime} onChange={e => setClockOutTime(e.target.value)} onBlur={cleanTime(setClockOutTime)} /></label>
+      <div className="setting-note"><button type="button" onClick={() => setClockOutDay(clockInDay)}>Set clock-out date same as clock-in</button></div>
+      <label>Lunch<select value={lunch} onChange={e => setLunch(e.target.value)}><option value="0">No Lunch</option><option value="30">30 Minutes</option><option value="60">1 Hour</option></select></label>
+    </> : <div className="wide calendar-field-wrap"><label>Date</label><CalendarField mode="single" value={clockInDay} buttonLabel={formatDay(clockInDay)} onChange={day => { setClockInDay(day); setClockOutDay(day); }} /></div>}
+    <label>Vacation Hours<input type="number" min="0" step="0.25" value={vacationHours} onChange={e => setVacationHours(e.target.value)} /></label>
+    <label>Banked Hours Used<input type="number" min="0" step="0.25" value={bankedHoursUsed} onChange={e => setBankedHoursUsed(e.target.value)} /></label>
+    <label className="wide">Notes<textarea value={notes} onChange={e => setNotes(e.target.value)} /></label>
+  </div><div className="modal-actions"><button onClick={onCancel}>Cancel</button><button className="save" onClick={() => onSave({ ...shift, clockInDay, clockOutDay, shiftDate: clockInDay, clockInTime: normalizeTimeInput(clockInTime), clockOutTime: normalizeTimeInput(clockOutTime), lunchMinutes: lunch, vacationHours, bankedHoursUsed, scheduledHours: shift.scheduledHours || standardHours, notes })}>Save</button></div></div></div>;
 }
 function CoverageModal({ prompt, onCancel, onUseBanked, onUseVacation }) { return <div className="modal"><div className="edit-box"><h3>Complete Today’s Paid Hours</h3><div className="coverage-summary"><strong>{fmtHours(prompt.worked)} worked</strong><span>of your {fmtHours(prompt.worked + prompt.remaining)} scheduled day</span><b>{fmtHours(prompt.remaining)} remaining</b></div><p className="modal-copy">Choose whether to use banked time or vacation for the remaining hours. You can also leave this as a short day and adjust it later.</p><div className="coverage-actions"><button className="save" onClick={onUseBanked}>Use {fmtHours(prompt.remaining)} Banked</button><button onClick={onUseVacation}>Use Vacation</button><button className="coverage-cancel" onClick={onCancel}>Leave Short Day</button></div></div></div>; }
 function TimeOffModal({ type, standardHours, onCancel, onSave }) {
