@@ -63,6 +63,7 @@ function calcHours(entry) {
   const net = Math.max(0, gross - (Number(entry.lunchMinutes || 0) / 60));
   return { gross, net };
 }
+const MAX_SHIFT_HOURS = 18;
 function fmtHours(hours) {
   const safe = Math.max(0, Number(hours) || 0);
   const whole = Math.floor(safe);
@@ -358,8 +359,53 @@ export default function App() {
   }
   function addManualShift() { const today = dateKey(); const shift = { id: uid(), date: today, entryType: 'worked', clockIn: combineDateTime(today, '08:00'), clockOut: combineDateTime(today, '17:00'), lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: 'Manual entry', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }; saveShift(shift); setEditing(shift); }
   function clockIn() { if (activeShift) return; runProcess('clockIn', () => { setLunchMinutes(0); saveShift({ id: uid(), date: dateKey(), entryType: 'worked', clockIn: new Date().toISOString(), clockOut: '', lunchMinutes: 0, vacationHours: 0, bankedHoursUsed: 0, scheduledHours: Number(workSettings.standardDailyHours || 8), notes: '', createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() }); }); }
-  function clockOut() { if (!activeShift) return; runProcess('clockOut', () => { const next = { ...activeShift, clockOut: new Date().toISOString(), lunchMinutes, updatedAt: new Date().toISOString() }; saveShift(next); setLunchMinutes(0); const worked = calcHours(next).net; const standard = Number(workSettings.standardDailyHours || 8); if (isRegularWorkday(next.date) && worked < standard - 0.01) setCoveragePrompt({ shift: next, worked, remaining: round2(standard - worked) }); }); }
-  function saveEdit(data) { runProcess('update', () => { const day = data.shiftDate || entryDay(data); const clockIn = data.clockInTime ? combineDateTime(day, data.clockInTime) : ''; const clockOut = data.clockOutTime ? combineDateTime(day, data.clockOutTime) : ''; saveShift({ ...data, date: day, entryType: data.entryType || 'worked', clockIn, clockOut, lunchMinutes: Number(data.lunchMinutes || 0), vacationHours: Number(data.vacationHours || 0), bankedHoursUsed: Number(data.bankedHoursUsed || 0), scheduledHours: Number(data.scheduledHours || workSettings.standardDailyHours || 8), notes: data.notes || '', updatedAt: new Date().toISOString() }); setEditing(null); }); }
+  function clockOut() {
+    if (!activeShift) return;
+    runProcess('clockOut', () => {
+      const next = { ...activeShift, clockOut: new Date().toISOString(), lunchMinutes, updatedAt: new Date().toISOString() };
+      const { gross } = calcHours(next);
+
+      if (gross > MAX_SHIFT_HOURS) {
+        alert('This shift exceeds 18 hours and looks like a missed clock-out. Please edit the shift to correct the clock-in and clock-out times instead.');
+        return;
+      }
+
+      saveShift(next);
+      setLunchMinutes(0);
+      const worked = calcHours(next).net;
+      const standard = Number(workSettings.standardDailyHours || 8);
+      if (isRegularWorkday(next.date) && worked < standard - 0.01) setCoveragePrompt({ shift: next, worked, remaining: round2(standard - worked) });
+    });
+  }
+  function saveEdit(data) {
+    runProcess('update', () => {
+      const day = data.shiftDate || entryDay(data);
+      const clockIn = data.clockInTime ? combineDateTime(day, data.clockInTime) : '';
+      const clockOut = data.clockOutTime ? combineDateTime(day, data.clockOutTime) : '';
+      const next = {
+        ...data,
+        date: day,
+        entryType: data.entryType || 'worked',
+        clockIn,
+        clockOut,
+        lunchMinutes: Number(data.lunchMinutes || 0),
+        vacationHours: Number(data.vacationHours || 0),
+        bankedHoursUsed: Number(data.bankedHoursUsed || 0),
+        scheduledHours: Number(data.scheduledHours || workSettings.standardDailyHours || 8),
+        notes: data.notes || '',
+        updatedAt: new Date().toISOString()
+      };
+
+      const { gross } = calcHours(next);
+      if (gross > MAX_SHIFT_HOURS) {
+        alert('This shift exceeds 18 hours and cannot be saved. Please correct the clock-in and clock-out times.');
+        return;
+      }
+
+      saveShift(next);
+      setEditing(null);
+    });
+  }
   function deleteShift(id) { if (!confirm('Delete this record?')) return; runProcess('delete', () => { const found = shifts.find(s => s.id === id); if (found) saveShift({ ...found, deleted: true, updatedAt: new Date().toISOString() }); setShifts(prev => prev.filter(s => s.id !== id)); }); }
   function applyBankedToShortDay(shift) {
     const worked = calcHours(shift).net;
